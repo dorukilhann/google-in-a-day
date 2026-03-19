@@ -66,3 +66,8 @@ python -m unittest discover -s tests -v
 - `google_in_a_day/web.py` localhost UI and API
 - `product_prd.md` build-oriented PRD
 - `recommendation.md` short production next steps
+
+## Author
+
+Doruk Ilhan 820220323
+GitHub: https://github.com/dorukilhann/google-in-a-day
