@@ -1,5 +1,5 @@
-# Production Roadmap
+# Production Recommendation
 
-For production scale, this project should move from a single-process crawler and indexer to a distributed architecture with separate crawl workers, a queue, persistent storage, and a scalable search index. Before deployment, it should add robots.txt support, politeness limits by domain, retry handling, logging, monitoring, and stronger failure recovery.
+The next production step should be to split crawling from serving search. Keep the crawler as a worker fleet behind a durable queue, and publish page-level indexing events into a dedicated search pipeline backed by durable indexed storage. That separation lets search stay fast and available even when crawling slows down, and it makes it much easier to scale each side independently. Before launch, add robots.txt support, per-domain politeness limits, retries with exponential backoff, structured logging, metrics, and stronger crash recovery for in-flight crawl jobs.
 
-The search layer should be separated from the crawler and backed by durable indexed storage such as Elasticsearch, OpenSearch, or a custom inverted index service. For higher scale, add sharding, caching, observability, ranking improvements, and containerized deployment with orchestration.
+For search, move from the in-memory index used here to a persistent inverted-index service or search engine, then add ranking improvements such as better field weighting, freshness, deduplication, and eventually link-based signals. Operationally, I would also introduce centralized configuration, dashboards for crawl throughput and search latency, alerting, and containerized deployment so the crawler, queue, persistence layer, and search service can be scaled and rolled out independently.

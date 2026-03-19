@@ -1,0 +1,25 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Test and local tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local crawler state and SQLite files
+*.db
+*.db-shm
+*.db-wal
+data/*
+!data/.gitkeep
+
+# OS noise
+.DS_Store
+Thumbs.db
