@@ -622,7 +622,49 @@ class CrawlerEngine:
             return headers.get_content_charset() or "utf-8"
         return "utf-8"
 
-    def search(self, query: str) -> list[SearchResult]:
+    def search(self, query: str, sort_by: str | None = None) -> list[SearchResult]:
+        if sort_by == "relevance":
+            return self._search_by_exact_relevance(query)
+        return self._search_by_default_rank(query)
+
+    def _search_by_default_rank(self, query: str) -> list[SearchResult]:
+        terms = tokenize(query)
+        if not terms:
+            return []
+
+        with self._lock:
+            term_snapshots = {term: dict(self._postings.get(term, {})) for term in set(terms)}
+            pages = dict(self._pages)
+            discoveries = {url: list(records) for url, records in self._discoveries_by_url.items()}
+
+        scores: dict[str, int] = defaultdict(int)
+        frequencies: dict[str, int] = defaultdict(int)
+        for term in terms:
+            for url, posting in term_snapshots.get(term, {}).items():
+                scores[url] += posting.frequency + (posting.title_hits * 5)
+                frequencies[url] += posting.frequency
+
+        results: list[SearchResult] = []
+        for url, score in scores.items():
+            page = pages.get(url)
+            if not page or not page.success:
+                continue
+            for record in discoveries.get(url, []):
+                results.append(
+                    SearchResult(
+                        relevant_url=url,
+                        origin_url=record.origin_url,
+                        depth=record.depth,
+                        score=score,
+                        title=page.title or url,
+                        frequency=frequencies[url],
+                    )
+                )
+        
+        results.sort(key=lambda item: (-item.score, item.depth, item.relevant_url, item.origin_url))
+        return results
+
+    def _search_by_exact_relevance(self, query: str) -> list[SearchResult]:
         terms = tokenize(query)
         if not terms:
             return []
@@ -630,6 +672,7 @@ class CrawlerEngine:
         with self._lock:
             entry_snapshots = {term: list(self._word_entries.get(term, {}).values()) for term in set(terms)}
             pages = dict(self._pages)
+
         aggregated: dict[tuple[str, str, int], dict[str, Any]] = {}
         for term in terms:
             for entry in entry_snapshots.get(term, []):

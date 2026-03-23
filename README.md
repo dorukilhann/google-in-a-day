@@ -5,7 +5,7 @@
 ## What it includes
 
 - `/index` behavior via `POST /index` and `POST /api/index` with `origin`, `max_depth`, `queue_capacity`, `rate_limit`, and `worker_count`
-- live `/search` behavior via `GET /search?query=...&sortBy=relevance`
+- live search behavior via `GET /api/search?q=...`
 - a simple localhost UI with three pages:
   - `/` crawler launcher
   - `/status` live system state
@@ -17,11 +17,10 @@
 
 ## How relevance works
 
-Search tokenizes the query and scores each matching `(url, origin_url, depth)` tuple using:
+Search tokenizes the query and scores a page using:
 
-- `relevance_score = (frequency * 10) + 1000 - (depth * 5)`
-
-The stored `frequency` comes from the indexed page text for the exact matched word. This is the same score used by the `/search?query=...&sortBy=relevance` endpoint.
+- term frequency in the indexed page text
+- a heavier bonus for title matches
 
 Each result is returned with:
 
@@ -51,15 +50,10 @@ python app.py --host 127.0.0.1 --port 3600 --db data/crawler.db --storage-dir da
 python -m unittest discover -s tests -v
 ```
 
-## Raw Storage Compatibility
+## Stored Word Data
 
-- The repository includes seeded raw crawl storage in `data/storage/p.data`.
-- You can inspect that file directly and choose a repeated word such as `python`.
-- The compatible search API is:
-
-```bash
-GET http://localhost:3600/search?query=python&sortBy=relevance
-```
+- The repository includes an example generated crawl storage file in `data/storage/p.data`.
+- These flat files make it easy to inspect indexed term data directly when you want to validate or debug a crawl.
 
 ## Implementation notes
 

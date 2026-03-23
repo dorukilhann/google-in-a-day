@@ -377,7 +377,7 @@ def render_search_page() -> bytes:
       </article>
       <article class="panel">
         <h2>Ranking</h2>
-        <p class="muted">Results are sorted by the endpoint's relevance formula: <code>(frequency * 10) + 1000 - (depth * 5)</code> for each exact matched word entry.</p>
+        <p class="muted">Results are ranked with a lightweight heuristic that favors stronger term frequency and title matches while keeping the output simple and explainable.</p>
       </article>
     </section>
     <section class="panel" style="margin-top:20px;">
@@ -391,7 +391,7 @@ def render_search_page() -> bytes:
       let currentQuery = '';
 
       async function runSearch(query) {
-        const response = await fetch(`/search?query=${encodeURIComponent(query)}&sortBy=relevance`);
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
         searchMeta.textContent = `${data.results.length} result(s) for "${data.query}"`;
         searchResults.innerHTML = data.results.length
@@ -402,8 +402,7 @@ def render_search_page() -> bytes:
                 <div class="job-grid">
                   <div>origin: <code>${result.origin_url}</code></div>
                   <div>depth: <code>${result.depth}</code></div>
-                  <div>relevance: <code>${result.relevance_score}</code></div>
-                  <div>frequency: <code>${result.frequency}</code></div>
+                  <div>score: <code>${result.score}</code></div>
                 </div>
               </div>
             `).join('')
@@ -494,10 +493,8 @@ def make_handler(engine: CrawlerEngine):
                 params = parse_qs(parsed.query)
                 if "query" in params:
                     query = params.get("query", [""])[0]
-                    sort_by = params.get("sortBy", ["relevance"])[0]
-                    results = engine.search(query)
-                    if sort_by == "relevance":
-                        results = sorted(results, key=lambda item: (-item.score, item.depth, item.relevant_url, item.origin_url))
+                    sort_by = params.get("sortBy", ["default"])[0]
+                    results = engine.search(query, sort_by=sort_by if sort_by == "relevance" else None)
                     json_response(
                         self,
                         200,
@@ -512,7 +509,7 @@ def make_handler(engine: CrawlerEngine):
                                     "origin": result.origin_url,
                                     "depth": result.depth,
                                     "frequency": result.frequency,
-                                    "relevance_score": result.score,
+                                    "relevance_score": result.score if sort_by == "relevance" else None,
                                     "score": result.score,
                                     "title": result.title,
                                 }
@@ -550,7 +547,6 @@ def make_handler(engine: CrawlerEngine):
                                 "origin_url": result.origin_url,
                                 "depth": result.depth,
                                 "frequency": result.frequency,
-                                "relevance_score": result.score,
                                 "score": result.score,
                                 "title": result.title,
                             }

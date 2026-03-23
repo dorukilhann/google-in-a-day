@@ -24,7 +24,6 @@ Build a single-node localhost application that can crawl from a given origin URL
 - Provide a search entry point that accepts a free-text query and returns `(relevant_url, origin_url, depth)`.
 - Allow search to run concurrently with active indexing and reflect newly indexed pages.
 - Use a simple explainable ranking heuristic such as keyword frequency plus title boosting.
-- Support an exact-word relevance sort using `relevance_score = (frequency * 10) + 1000 - (depth * 5)`.
 - Provide a simple localhost UI or CLI for:
   - starting indexing
   - running search
@@ -53,6 +52,6 @@ Build a single-node localhost application that can crawl from a given origin URL
 - Starting a crawl from the UI or API begins indexing immediately.
 - A page is fetched at most once globally.
 - Search can return relevant results before the crawl has completed.
-- Raw storage files are present and searchable in a way that matches the exposed relevance API.
+- Raw storage files are present for direct inspection of indexed term data.
 - Status output clearly shows whether indexing is active and whether back pressure is active.
 - The repository contains runnable code, this PRD, a user-facing README, and a short production recommendation document.

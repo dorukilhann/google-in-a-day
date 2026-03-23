@@ -144,7 +144,7 @@ class EngineTestCase(unittest.TestCase):
         finally:
             reloaded.store.close()
 
-    def test_raw_storage_and_relevance_search(self) -> None:
+    def test_raw_storage_generation_from_crawl(self) -> None:
         origin = f"http://127.0.0.1:{self.port}/"
         job = self.engine.start_job(origin=origin, max_depth=1, rate_limit=20, queue_capacity=10, worker_count=2)
         self.wait_for_job(job["job_id"])
@@ -157,9 +157,9 @@ class EngineTestCase(unittest.TestCase):
 
         results = self.engine.search("beta")
         self.assertEqual(results[0].relevant_url, f"http://127.0.0.1:{self.port}/docs")
-        self.assertEqual(results[0].score, (3 * 10) + 1000 - (1 * 5))
+        self.assertEqual(results[0].score, 8)
 
-    def test_search_route_supports_expected_search_format(self) -> None:
+    def test_search_route_supports_sort_parameter(self) -> None:
         origin = f"http://127.0.0.1:{self.port}/"
         job = self.engine.start_job(origin=origin, max_depth=1, rate_limit=20, queue_capacity=10, worker_count=2)
         self.wait_for_job(job["job_id"])
