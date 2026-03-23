@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 import unittest
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.request import urlopen
 
 from google_in_a_day.engine import CrawlerEngine
+from google_in_a_day.web import make_handler
 
 
 PAGES = {
@@ -79,7 +82,8 @@ class EngineTestCase(unittest.TestCase):
         temp_root = Path(__file__).resolve().parents[1] / "data" / "testdbs"
         temp_root.mkdir(parents=True, exist_ok=True)
         self.db_path = str(temp_root / f"{uuid.uuid4().hex}.db")
-        self.engine = CrawlerEngine(db_path=self.db_path)
+        self.storage_dir = str(temp_root / f"{uuid.uuid4().hex}_storage")
+        self.engine = CrawlerEngine(db_path=self.db_path, storage_dir=self.storage_dir)
 
     def tearDown(self) -> None:
         self.engine.store.close()
@@ -89,6 +93,9 @@ class EngineTestCase(unittest.TestCase):
         for path in [db_path, wal_path, shm_path]:
             if path.exists():
                 path.unlink()
+        storage_path = Path(self.storage_dir)
+        if storage_path.exists():
+            shutil.rmtree(storage_path)
 
     def wait_for_job(self, job_id: str, timeout: float = 5.0) -> dict:
         deadline = time.time() + timeout
@@ -117,7 +124,7 @@ class EngineTestCase(unittest.TestCase):
         self.wait_for_job(job["job_id"])
         self.engine.store.close()
 
-        reloaded = CrawlerEngine(db_path=self.db_path)
+        reloaded = CrawlerEngine(db_path=self.db_path, storage_dir=self.storage_dir)
         try:
             results = reloaded.search("gamma")
             serialized = json.dumps(
@@ -134,6 +141,40 @@ class EngineTestCase(unittest.TestCase):
             self.assertIn("/deep", serialized)
         finally:
             reloaded.store.close()
+
+    def test_raw_storage_and_relevance_search(self) -> None:
+        origin = f"http://127.0.0.1:{self.port}/"
+        job = self.engine.start_job(origin=origin, max_depth=1, rate_limit=20, queue_capacity=10, worker_count=2)
+        self.wait_for_job(job["job_id"])
+
+        storage_file = Path(self.storage_dir) / "b.data"
+        self.assertTrue(storage_file.exists())
+        lines = storage_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"beta {origin} {origin} 0 1", lines)
+        self.assertIn(f"beta http://127.0.0.1:{self.port}/docs {origin} 1 3", lines)
+
+        results = self.engine.search("beta")
+        self.assertEqual(results[0].relevant_url, f"http://127.0.0.1:{self.port}/docs")
+        self.assertEqual(results[0].score, (3 * 10) + 1000 - (1 * 5))
+
+    def test_search_route_supports_expected_search_format(self) -> None:
+        origin = f"http://127.0.0.1:{self.port}/"
+        job = self.engine.start_job(origin=origin, max_depth=1, rate_limit=20, queue_capacity=10, worker_count=2)
+        self.wait_for_job(job["job_id"])
+
+        api_server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.engine))
+        api_port = api_server.server_address[1]
+        api_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
+        api_thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{api_port}/search?query=beta&sortBy=relevance", timeout=2) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["results"][0]["url"], f"http://127.0.0.1:{self.port}/docs")
+            self.assertEqual(payload["results"][0]["relevance_score"], (3 * 10) + 1000 - (1 * 5))
+        finally:
+            api_server.shutdown()
+            api_server.server_close()
+            api_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

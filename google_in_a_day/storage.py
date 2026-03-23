@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass
 import json
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class WordStorageEntry:
+    word: str
+    url: str
+    origin_url: str
+    depth: int
+    frequency: int
+
+    def key(self) -> tuple[str, str, str, int]:
+        return (self.word, self.url, self.origin_url, self.depth)
+
+    def to_line(self) -> str:
+        return f"{self.word} {self.url} {self.origin_url} {self.depth} {self.frequency}"
 
 
 class SQLiteStore:
@@ -238,3 +255,102 @@ class SQLiteStore:
                 (job_id, limit),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+
+class FlatFileWordStore:
+    def __init__(self, storage_dir: str) -> None:
+        self.storage_dir = Path(storage_dir)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def load_entries(self) -> list[WordStorageEntry]:
+        entries: list[WordStorageEntry] = []
+        with self._lock:
+            for path in sorted(self.storage_dir.glob("*.data")):
+                for raw_line in path.read_text(encoding="utf-8").splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split()
+                    if len(parts) != 5:
+                        continue
+                    word, url, origin_url, depth, frequency = parts
+                    try:
+                        entries.append(
+                            WordStorageEntry(
+                                word=word,
+                                url=url,
+                                origin_url=origin_url,
+                                depth=int(depth),
+                                frequency=int(frequency),
+                            )
+                        )
+                    except ValueError:
+                        continue
+        return entries
+
+    def upsert_entries(self, entries: list[WordStorageEntry]) -> None:
+        if not entries:
+            return
+
+        grouped: dict[str, list[WordStorageEntry]] = defaultdict(list)
+        for entry in entries:
+            grouped[self._letter_for_word(entry.word)].append(entry)
+
+        with self._lock:
+            for letter, new_entries in grouped.items():
+                current = self._load_letter_entries(letter)
+                for entry in new_entries:
+                    current[entry.key()] = entry
+                self._write_letter_entries(letter, list(current.values()))
+
+    def rewrite_all(self, entries: list[WordStorageEntry]) -> None:
+        grouped: dict[str, dict[tuple[str, str, str, int], WordStorageEntry]] = defaultdict(dict)
+        for entry in entries:
+            grouped[self._letter_for_word(entry.word)][entry.key()] = entry
+
+        with self._lock:
+            for path in self.storage_dir.glob("*.data"):
+                path.unlink()
+            for letter, values in grouped.items():
+                self._write_letter_entries(letter, list(values.values()))
+
+    def _letter_for_word(self, word: str) -> str:
+        return (word[:1] or "_").lower()
+
+    def _path_for_letter(self, letter: str) -> Path:
+        return self.storage_dir / f"{letter}.data"
+
+    def _load_letter_entries(self, letter: str) -> dict[tuple[str, str, str, int], WordStorageEntry]:
+        path = self._path_for_letter(letter)
+        if not path.exists():
+            return {}
+        entries: dict[tuple[str, str, str, int], WordStorageEntry] = {}
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) != 5:
+                continue
+            word, url, origin_url, depth, frequency = parts
+            try:
+                entry = WordStorageEntry(
+                    word=word,
+                    url=url,
+                    origin_url=origin_url,
+                    depth=int(depth),
+                    frequency=int(frequency),
+                )
+            except ValueError:
+                continue
+            entries[entry.key()] = entry
+        return entries
+
+    def _write_letter_entries(self, letter: str, entries: list[WordStorageEntry]) -> None:
+        path = self._path_for_letter(letter)
+        lines = [entry.to_line() for entry in sorted(entries, key=lambda item: (item.word, item.url, item.origin_url, item.depth))]
+        content = "\n".join(lines)
+        if content:
+            content = f"{content}\n"
+        path.write_text(content, encoding="utf-8")

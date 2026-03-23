@@ -40,7 +40,10 @@ def normalize_url(raw_url: str, base_url: str | None = None) -> str | None:
 
     scheme = split.scheme.lower()
     hostname = split.hostname.lower() if split.hostname else ""
-    port = split.port
+    try:
+        port = split.port
+    except ValueError:
+        return None
     if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
         netloc = f"{hostname}:{port}"
     else:

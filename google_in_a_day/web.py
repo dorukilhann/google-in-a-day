@@ -197,7 +197,7 @@ INDEX_PAGE = """<!doctype html>
   <main class="shell">
     <section class="hero">
       <h1>google-in-a-day</h1>
-      <p class="lede">A single-node crawler and live search engine with bounded queues, rate-based back pressure, thread-safe shared state, and search results that appear while indexing is still running.</p>
+      <p class="lede">A single-node crawler and live search engine with bounded queues, rate-based back pressure, thread-safe shared state, raw word storage files, and search results that appear while indexing is still running.</p>
       <nav>
         <a href="/">Crawler</a>
         <a href="/status">Crawler Status</a>
@@ -295,7 +295,7 @@ def render_home() -> bytes:
         payload.rate_limit = Number(payload.rate_limit);
         payload.queue_capacity = Number(payload.queue_capacity);
         payload.worker_count = Number(payload.worker_count);
-        const response = await fetch('/api/index', {
+        const response = await fetch('/index', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -391,18 +391,19 @@ def render_search_page() -> bytes:
       let currentQuery = '';
 
       async function runSearch(query) {
-        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const response = await fetch(`/search?query=${encodeURIComponent(query)}&sortBy=relevance`);
         const data = await response.json();
         searchMeta.textContent = `${data.results.length} result(s) for "${data.query}"`;
         searchResults.innerHTML = data.results.length
           ? data.results.map(result => `
               <div class="result">
-                <div><strong>${result.title || result.relevant_url}</strong></div>
-                <div><a href="${result.relevant_url}" target="_blank" rel="noreferrer">${result.relevant_url}</a></div>
+                <div><strong>${result.title || result.url}</strong></div>
+                <div><a href="${result.url}" target="_blank" rel="noreferrer">${result.url}</a></div>
                 <div class="job-grid">
                   <div>origin: <code>${result.origin_url}</code></div>
                   <div>depth: <code>${result.depth}</code></div>
-                  <div>score: <code>${result.score}</code></div>
+                  <div>relevance: <code>${result.relevance_score}</code></div>
+                  <div>frequency: <code>${result.frequency}</code></div>
                 </div>
               </div>
             `).join('')
@@ -490,6 +491,36 @@ def make_handler(engine: CrawlerEngine):
                 html_response(self, render_status_page())
                 return
             if parsed.path == "/search":
+                params = parse_qs(parsed.query)
+                if "query" in params:
+                    query = params.get("query", [""])[0]
+                    sort_by = params.get("sortBy", ["relevance"])[0]
+                    results = engine.search(query)
+                    if sort_by == "relevance":
+                        results = sorted(results, key=lambda item: (-item.score, item.depth, item.relevant_url, item.origin_url))
+                    json_response(
+                        self,
+                        200,
+                        {
+                            "query": query,
+                            "sortBy": sort_by,
+                            "results": [
+                                {
+                                    "url": result.relevant_url,
+                                    "relevant_url": result.relevant_url,
+                                    "origin_url": result.origin_url,
+                                    "origin": result.origin_url,
+                                    "depth": result.depth,
+                                    "frequency": result.frequency,
+                                    "relevance_score": result.score,
+                                    "score": result.score,
+                                    "title": result.title,
+                                }
+                                for result in results
+                            ],
+                        },
+                    )
+                    return
                 html_response(self, render_search_page())
                 return
             if parsed.path.startswith("/jobs/"):
@@ -505,7 +536,7 @@ def make_handler(engine: CrawlerEngine):
                 return
             if parsed.path == "/api/search":
                 params = parse_qs(parsed.query)
-                query = params.get("q", [""])[0]
+                query = params.get("q", params.get("query", [""]))[0]
                 results = engine.search(query)
                 json_response(
                     self,
@@ -514,9 +545,12 @@ def make_handler(engine: CrawlerEngine):
                         "query": query,
                         "results": [
                             {
+                                "url": result.relevant_url,
                                 "relevant_url": result.relevant_url,
                                 "origin_url": result.origin_url,
                                 "depth": result.depth,
+                                "frequency": result.frequency,
+                                "relevance_score": result.score,
                                 "score": result.score,
                                 "title": result.title,
                             }
@@ -529,7 +563,7 @@ def make_handler(engine: CrawlerEngine):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path != "/api/index":
+            if parsed.path not in {"/api/index", "/index"}:
                 self.send_error(HTTPStatus.NOT_FOUND, "Not found")
                 return
 
@@ -557,11 +591,12 @@ def make_handler(engine: CrawlerEngine):
 def run_server(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the google-in-a-day crawler UI.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=8000, type=int)
+    parser.add_argument("--port", default=3600, type=int)
     parser.add_argument("--db", default=DEFAULT_DB)
+    parser.add_argument("--storage-dir", default=str(BASE_DIR / "data" / "storage"))
     args = parser.parse_args(argv)
 
-    engine = CrawlerEngine(db_path=args.db)
+    engine = CrawlerEngine(db_path=args.db, storage_dir=args.storage_dir)
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(engine))
     print(f"Serving google-in-a-day on http://{args.host}:{args.port}")
     try:

@@ -7,13 +7,14 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.message import Message
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from .parsing import PageParser, normalize_url, term_frequencies, tokenize
-from .storage import SQLiteStore
+from .storage import FlatFileWordStore, SQLiteStore, WordStorageEntry
 
 
 MAX_DOWNLOAD_BYTES = 1_000_000
@@ -32,6 +33,7 @@ class SearchResult:
     depth: int
     score: int
     title: str
+    frequency: int
 
 
 @dataclass(frozen=True)
@@ -213,6 +215,7 @@ class CrawlJob:
             self.updated_at = utc_now()
 
         if page.success:
+            self.engine.record_word_entries(page, self.origin_url, depth)
             self.log(f"Indexed {url} at depth {depth}.")
             if depth < self.max_depth:
                 for link in page.links:
@@ -335,13 +338,16 @@ class CrawlJob:
 
 
 class CrawlerEngine:
-    def __init__(self, db_path: str = "data/crawler.db") -> None:
+    def __init__(self, db_path: str = "data/crawler.db", storage_dir: str | None = None) -> None:
+        db_path_obj = Path(db_path)
         self.store = SQLiteStore(db_path)
+        self.word_store = FlatFileWordStore(storage_dir or str(db_path_obj.parent / "storage"))
         self.store.mark_incomplete_jobs_interrupted()
         self._lock = threading.RLock()
         self._pages: dict[str, PageRecord] = {}
         self._fetch_state: dict[str, str] = {}
         self._postings: dict[str, dict[str, Posting]] = defaultdict(dict)
+        self._word_entries: dict[str, dict[tuple[str, str, int], WordStorageEntry]] = defaultdict(dict)
         self._discoveries_by_url: dict[str, list[DiscoveryRecord]] = defaultdict(list)
         self._jobs_live: dict[str, CrawlJob] = {}
         self._job_history: dict[str, dict[str, Any]] = {}
@@ -349,6 +355,11 @@ class CrawlerEngine:
         self._load_from_storage()
 
     def _load_from_storage(self) -> None:
+        loaded_word_entries = self.word_store.load_entries()
+        with self._lock:
+            for entry in loaded_word_entries:
+                self._word_entries[entry.word][(entry.url, entry.origin_url, entry.depth)] = entry
+
         for row in self.store.load_pages():
             page = PageRecord(
                 url=row["url"],
@@ -388,6 +399,9 @@ class CrawlerEngine:
                     )
                 )
 
+        if not loaded_word_entries and self._pages and self._discoveries_by_url:
+            self._rebuild_word_storage_from_sqlite()
+
     def _index_page_locked(self, page: PageRecord) -> None:
         text_counts = term_frequencies(page.text)
         title_counts = term_frequencies(page.title)
@@ -396,6 +410,64 @@ class CrawlerEngine:
                 frequency=text_counts.get(term, 0),
                 title_hits=title_counts.get(term, 0),
             )
+
+    def _rebuild_word_storage_from_sqlite(self) -> None:
+        rebuilt_entries: list[WordStorageEntry] = []
+        with self._lock:
+            pages = dict(self._pages)
+            discoveries = {url: list(records) for url, records in self._discoveries_by_url.items()}
+
+        for url, page in pages.items():
+            if not page.success:
+                continue
+            frequencies = term_frequencies(page.text)
+            if not frequencies:
+                continue
+            for record in discoveries.get(url, []):
+                for word, frequency in frequencies.items():
+                    rebuilt_entries.append(
+                        WordStorageEntry(
+                            word=word,
+                            url=url,
+                            origin_url=record.origin_url,
+                            depth=record.depth,
+                            frequency=frequency,
+                        )
+                    )
+
+        with self._lock:
+            self._word_entries = defaultdict(dict)
+            for entry in rebuilt_entries:
+                self._word_entries[entry.word][(entry.url, entry.origin_url, entry.depth)] = entry
+
+        self.word_store.rewrite_all(rebuilt_entries)
+
+    def record_word_entries(self, page: PageRecord, origin_url: str, depth: int) -> None:
+        if not page.success:
+            return
+
+        frequencies = term_frequencies(page.text)
+        if not frequencies:
+            return
+
+        new_entries: list[WordStorageEntry] = []
+        with self._lock:
+            for word, frequency in frequencies.items():
+                entry = WordStorageEntry(
+                    word=word,
+                    url=page.url,
+                    origin_url=origin_url,
+                    depth=depth,
+                    frequency=frequency,
+                )
+                key = (entry.url, entry.origin_url, entry.depth)
+                existing = self._word_entries[word].get(key)
+                if existing == entry:
+                    continue
+                self._word_entries[word][key] = entry
+                new_entries.append(entry)
+
+        self.word_store.upsert_entries(new_entries)
 
     def persist_job_summary(self, summary: dict[str, Any]) -> None:
         self.store.save_job_summary(summary)
@@ -549,30 +621,41 @@ class CrawlerEngine:
             return []
 
         with self._lock:
-            term_snapshots = {term: dict(self._postings.get(term, {})) for term in set(terms)}
+            entry_snapshots = {term: list(self._word_entries.get(term, {}).values()) for term in set(terms)}
             pages = dict(self._pages)
-            discoveries = {url: list(records) for url, records in self._discoveries_by_url.items()}
-
-        scores: dict[str, int] = defaultdict(int)
+        aggregated: dict[tuple[str, str, int], dict[str, Any]] = {}
         for term in terms:
-            for url, posting in term_snapshots.get(term, {}).items():
-                scores[url] += posting.frequency + (posting.title_hits * 5)
+            for entry in entry_snapshots.get(term, []):
+                key = (entry.url, entry.origin_url, entry.depth)
+                bucket = aggregated.setdefault(
+                    key,
+                    {
+                        "url": entry.url,
+                        "origin_url": entry.origin_url,
+                        "depth": entry.depth,
+                        "matched_terms": {},
+                    },
+                )
+                bucket["matched_terms"][term] = entry.frequency
 
         results: list[SearchResult] = []
-        for url, score in scores.items():
+        for bucket in aggregated.values():
+            url = bucket["url"]
+            depth = bucket["depth"]
+            term_frequencies_map: dict[str, int] = bucket["matched_terms"]
+            total_frequency = sum(term_frequencies_map.values())
+            score = sum((frequency * 10) + 1000 for frequency in term_frequencies_map.values()) - (depth * 5)
             page = pages.get(url)
-            if not page or not page.success:
-                continue
-            for record in discoveries.get(url, []):
-                results.append(
-                    SearchResult(
-                        relevant_url=url,
-                        origin_url=record.origin_url,
-                        depth=record.depth,
-                        score=score,
-                        title=page.title or url,
-                    )
+            results.append(
+                SearchResult(
+                    relevant_url=url,
+                    origin_url=bucket["origin_url"],
+                    depth=depth,
+                    score=score,
+                    title=(page.title if page and page.title else url),
+                    frequency=total_frequency,
                 )
+            )
 
         results.sort(key=lambda item: (-item.score, item.depth, item.relevant_url, item.origin_url))
         return results

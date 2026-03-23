@@ -1,0 +1,9 @@
+page https://www.python.org/ https://www.python.org/ 0 4
+page https://docs.python.org/3/tutorial/ https://www.python.org/ 1 2
+page https://pypi.org/project/pip/ https://www.python.org/ 1 1
+program https://www.python.org/ https://www.python.org/ 0 2
+program https://docs.python.org/3/tutorial/ https://www.python.org/ 1 4
+program https://pypi.org/project/pip/ https://www.python.org/ 1 1
+python https://www.python.org/ https://www.python.org/ 0 12
+python https://docs.python.org/3/tutorial/ https://www.python.org/ 1 18
+python https://pypi.org/project/pip/ https://www.python.org/ 1 7
