@@ -21,7 +21,7 @@ data/*
 !data/.gitkeep
 !data/storage/
 data/storage/*
-!data/storage/*.data
+!data/storage/p.data
 data/testdbs/*
 
 # OS noise

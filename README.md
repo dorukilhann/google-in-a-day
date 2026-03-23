@@ -13,7 +13,7 @@
 - SQLite-backed persistence for pages, job metadata, discoveries, and logs
 - raw word storage files under `data/storage/<first-letter>.data`
 - automatic recovery of already indexed data after restart
-- a seeded sample raw storage file at `data/storage/p.data` so direct storage-file checks work immediately
+- an example generated crawl storage file committed at `data/storage/p.data` for inspection
 
 ## How relevance works
 

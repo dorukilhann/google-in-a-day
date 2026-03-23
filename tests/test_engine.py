@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import shutil
 import threading
@@ -51,9 +52,10 @@ class PageHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        encoded = body.encode("utf-8")
+        encoded = gzip.compress(body.encode("utf-8"))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         if self.path == "/docs":

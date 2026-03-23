@@ -377,7 +377,7 @@ def render_search_page() -> bytes:
       </article>
       <article class="panel">
         <h2>Ranking</h2>
-        <p class="muted">Results are scored with a simple heuristic: query term frequency in the page text plus a heavier bonus for title matches.</p>
+        <p class="muted">Results are sorted by the endpoint's relevance formula: <code>(frequency * 10) + 1000 - (depth * 5)</code> for each exact matched word entry.</p>
       </article>
     </section>
     <section class="panel" style="margin-top:20px;">

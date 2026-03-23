@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import queue
 import threading
 import time
@@ -550,6 +551,12 @@ class CrawlerEngine:
                 truncated = len(body) > MAX_DOWNLOAD_BYTES
                 if truncated:
                     body = body[:MAX_DOWNLOAD_BYTES]
+                content_encoding = (headers.get("Content-Encoding") or "").lower()
+                if "gzip" in content_encoding:
+                    try:
+                        body = gzip.decompress(body)
+                    except OSError:
+                        pass
                 charset = self._charset_from_headers(headers)
                 text_body = body.decode(charset, errors="replace")
                 content_type = headers.get_content_type().lower() if isinstance(headers, Message) else ""
